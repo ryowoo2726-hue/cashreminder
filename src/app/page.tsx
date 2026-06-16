@@ -3,12 +3,13 @@
 import {
   CalendarDays,
   CheckCircle2,
-  CircleDollarSign,
   Coffee,
   Gamepad2,
   Loader2,
   Package,
+  Plus,
   Save,
+  TrendingUp,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -77,6 +78,14 @@ export default function Home() {
       "food"
     );
   }, [selectedCategory]);
+
+  const grandTotal = useMemo(() => {
+    return Object.values(totals).reduce((sum, value) => sum + value, 0);
+  }, [totals]);
+
+  const totalLimit = useMemo(() => {
+    return Object.values(limits).reduce((sum, value) => sum + value, 0);
+  }, [limits]);
 
   useEffect(() => {
     let isMounted = true;
@@ -182,7 +191,10 @@ export default function Home() {
       setItem("");
       setMemo("");
       setDate(todayDateOnly());
-      setSuccessMessage("저장되었습니다.");
+      setSuccessMessage("성공적으로 저장되었습니다.");
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccessMessage(""), 3000);
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -194,51 +206,82 @@ export default function Home() {
     }
   }
 
+  const currentMonth = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long' });
+
   return (
-    <main className="min-h-screen bg-[#f6f7f4] text-[#17201a]">
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-3 py-2 sm:flex-row sm:items-end sm:justify-between">
+    <main className="min-h-screen bg-[#F8FAFC] text-[#1E293B] pb-20">
+      <div className="mx-auto max-w-2xl px-4 pt-8 sm:pt-12">
+        {/* Header Section */}
+        <header className="mb-8 flex items-center justify-between">
           <div>
-            <p className="text-sm font-semibold text-[#526158]">Cash Reminder</p>
-            <h1 className="text-3xl font-bold tracking-normal text-[#17201a]">
-              이번 달 소비 한도
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">내 소비 요약</h1>
+            <div className="mt-1 flex items-center gap-2 text-sm font-medium text-slate-500">
+              <CalendarDays className="size-4" />
+              <span>{currentMonth}</span>
+            </div>
           </div>
-          <div className="flex items-center gap-2 text-sm font-medium text-[#526158]">
-            <CalendarDays className="size-4" />
-            <span>{date.slice(0, 7)}</span>
+          <div className="hidden sm:block">
+            <span className="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+              실시간 동기화 중
+            </span>
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-3">
-          {categories.map((category) => {
-            const Icon = categoryIcons[category.key];
-
-            return (
-              <BudgetGauge
-                key={category.key}
-                icon={Icon}
-                label={category.label}
-                description={category.description}
-                total={totals[category.key]}
-                limit={limits[category.key]}
-                isLoading={isLoading}
+        {/* Total Summary Card */}
+        <div className="mb-8 overflow-hidden rounded-3xl bg-[#0F172A] p-6 text-white shadow-xl shadow-slate-200">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-400">이번 달 총 지출</p>
+            <TrendingUp className="size-5 text-emerald-400" />
+          </div>
+          <p className="mt-2 text-4xl font-bold">
+            {isLoading ? "..." : currencyFormatter.format(grandTotal)}
+          </p>
+          <div className="mt-6">
+            <div className="flex justify-between text-xs font-medium text-slate-400 mb-2">
+              <span>총 한도 {currencyFormatter.format(totalLimit)}</span>
+              <span>{totalLimit > 0 ? Math.round((grandTotal / totalLimit) * 100) : 0}%</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+              <div 
+                className="h-full bg-emerald-500 transition-all duration-1000 ease-out"
+                style={{ width: `${Math.min(totalLimit > 0 ? (grandTotal / totalLimit) * 100 : 0, 100)}%` }}
               />
-            );
-          })}
+            </div>
+          </div>
+        </div>
+
+        {/* Category Gauges */}
+        <section className="mb-10 grid gap-4">
+          <h2 className="text-lg font-bold">카테고리별 현황</h2>
+          <div className="grid grid-cols-1 gap-4">
+            {categories.map((category) => {
+              const Icon = categoryIcons[category.key];
+              return (
+                <BudgetGauge
+                  key={category.key}
+                  icon={Icon}
+                  label={category.label}
+                  total={totals[category.key]}
+                  limit={limits[category.key]}
+                  isLoading={isLoading}
+                />
+              );
+            })}
+          </div>
         </section>
 
-        <section className="grid gap-5 lg:grid-cols-[1fr_360px] lg:items-start">
-          <form
-            onSubmit={handleSubmit}
-            className="rounded-lg border border-[#d7ddd3] bg-white p-4 shadow-sm sm:p-5"
-          >
-            <div className="mb-4 flex items-center gap-2">
-              <CircleDollarSign className="size-5 text-[#21605a]" />
-              <h2 className="text-lg font-bold">소비 입력</h2>
+        {/* Quick Input Form */}
+        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="mb-6 flex items-center gap-2">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
+              <Plus className="size-6" />
             </div>
+            <h2 className="text-xl font-bold">빠른 지출 기록</h2>
+          </div>
 
-            <div className="grid grid-cols-3 gap-2">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Category Selector */}
+            <div className="grid grid-cols-3 gap-3">
               {categories.map((category) => {
                 const Icon = categoryIcons[category.key];
                 const isSelected = selectedCategory === category.label;
@@ -247,115 +290,93 @@ export default function Home() {
                   <button
                     key={category.key}
                     type="button"
-                    title={category.description}
                     onClick={() => setSelectedCategory(category.label)}
-                    className={`flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border px-2 text-center text-sm font-bold transition ${
+                    className={`flex flex-col items-center justify-center gap-2 rounded-2xl border-2 py-4 transition-all ${
                       isSelected
-                        ? "border-[#21605a] bg-[#e8f4ef] text-[#17433f]"
-                        : "border-[#d7ddd3] bg-white text-[#445049] hover:border-[#91aaa1]"
+                        ? "border-[#0F172A] bg-[#0F172A] text-white shadow-lg"
+                        : "border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200"
                     }`}
                   >
                     <Icon className="size-6" />
-                    <span className="leading-tight">{category.label}</span>
+                    <span className="text-xs font-bold">{category.label}</span>
                   </button>
                 );
               })}
             </div>
 
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <label className="flex flex-col gap-2 text-sm font-semibold text-[#445049]">
-                금액
+            {/* Amount Input */}
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-2">금액</label>
+              <div className="relative">
                 <input
                   value={amount}
                   onChange={(event) => setAmount(event.target.value)}
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  placeholder="35000"
-                  className="h-14 rounded-lg border border-[#cfd7cc] bg-white px-4 text-lg font-bold text-[#17201a] outline-none transition focus:border-[#21605a] focus:ring-4 focus:ring-[#d7ece5]"
+                  placeholder="0"
+                  className="w-full rounded-2xl border-none bg-slate-100 px-6 py-4 text-2xl font-bold focus:ring-2 focus:ring-slate-900 outline-none"
                 />
-              </label>
+                <span className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-400 font-bold">원</span>
+              </div>
+            </div>
 
-              <label className="flex flex-col gap-2 text-sm font-semibold text-[#445049]">
-                날짜
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">항목</label>
+                <input
+                  value={item}
+                  onChange={(event) => setItem(event.target.value)}
+                  placeholder="무엇을 샀나요?"
+                  className="w-full rounded-xl border-none bg-slate-100 px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-slate-900 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">날짜</label>
                 <input
                   value={date}
                   onChange={(event) => setDate(event.target.value)}
                   type="date"
-                  className="h-14 rounded-lg border border-[#cfd7cc] bg-white px-4 text-base font-semibold text-[#17201a] outline-none transition focus:border-[#21605a] focus:ring-4 focus:ring-[#d7ece5]"
+                  className="w-full rounded-xl border-none bg-slate-100 px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-slate-900 outline-none"
                 />
-              </label>
+              </div>
             </div>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <label className="flex flex-col gap-2 text-sm font-semibold text-[#445049]">
-                소비 항목
-                <input
-                  value={item}
-                  onChange={(event) => setItem(event.target.value)}
-                  placeholder="저녁 삼겹살"
-                  className="h-12 rounded-lg border border-[#cfd7cc] bg-white px-4 text-base text-[#17201a] outline-none transition focus:border-[#21605a] focus:ring-4 focus:ring-[#d7ece5]"
-                />
-              </label>
-
-              <label className="flex flex-col gap-2 text-sm font-semibold text-[#445049]">
-                메모
-                <input
-                  value={memo}
-                  onChange={(event) => setMemo(event.target.value)}
-                  placeholder="선택 입력"
-                  className="h-12 rounded-lg border border-[#cfd7cc] bg-white px-4 text-base text-[#17201a] outline-none transition focus:border-[#21605a] focus:ring-4 focus:ring-[#d7ece5]"
-                />
-              </label>
+            <div>
+              <label className="block text-sm font-bold text-slate-700 mb-2">메모 (선택)</label>
+              <input
+                value={memo}
+                onChange={(event) => setMemo(event.target.value)}
+                placeholder="추가 내용을 적어주세요"
+                className="w-full rounded-xl border-none bg-slate-100 px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-slate-900 outline-none"
+              />
             </div>
 
             <button
               type="submit"
               disabled={isSaving}
-              className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-lg bg-[#21605a] px-5 text-base font-bold text-white transition hover:bg-[#174d48] disabled:cursor-not-allowed disabled:bg-[#91aaa1]"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-4 text-lg font-bold text-white shadow-lg shadow-emerald-200 transition-all hover:bg-emerald-600 active:scale-[0.98] disabled:bg-slate-300 disabled:shadow-none"
             >
               {isSaving ? (
-                <Loader2 className="size-5 animate-spin" />
+                <Loader2 className="size-6 animate-spin" />
               ) : (
-                <Save className="size-5" />
+                <Save className="size-6" />
               )}
-              <span>{isSaving ? "저장 중" : "저장"}</span>
+              <span>{isSaving ? "저장 중..." : "지출 기록하기"}</span>
             </button>
 
-            {error ? (
-              <p className="mt-4 rounded-lg border border-[#e9b3a9] bg-[#fff1ef] px-3 py-2 text-sm font-semibold text-[#9b2f20]">
+            {error && (
+              <div className="rounded-xl bg-red-50 p-4 text-sm font-medium text-red-600 animate-pulse">
                 {error}
-              </p>
-            ) : null}
+              </div>
+            )}
 
-            {successMessage ? (
-              <p className="mt-4 flex items-center gap-2 rounded-lg border border-[#bad8bd] bg-[#eef8ef] px-3 py-2 text-sm font-semibold text-[#246231]">
+            {successMessage && (
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-50 p-4 text-sm font-medium text-emerald-600">
                 <CheckCircle2 className="size-4" />
                 {successMessage}
-              </p>
-            ) : null}
+              </div>
+            )}
           </form>
-
-          <aside className="rounded-lg border border-[#d7ddd3] bg-[#17201a] p-4 text-white shadow-sm">
-            <p className="text-sm font-semibold text-[#abc2b6]">월간 합계</p>
-            <p className="mt-2 text-3xl font-bold">
-              {currencyFormatter.format(
-                Object.values(totals).reduce((sum, value) => sum + value, 0),
-              )}
-            </p>
-            <div className="mt-5 space-y-3">
-              {categories.map((category) => (
-                <div
-                  key={category.key}
-                  className="flex items-center justify-between border-t border-white/10 pt-3 text-sm"
-                >
-                  <span className="text-[#d8e4dc]">{category.label}</span>
-                  <span className="font-bold">
-                    {currencyFormatter.format(totals[category.key])}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </aside>
         </section>
       </div>
     </main>
@@ -365,61 +386,64 @@ export default function Home() {
 function BudgetGauge({
   icon: Icon,
   label,
-  description,
   total,
   limit,
   isLoading,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   label: CategoryLabel;
-  description: string;
   total: number;
   limit: number;
   isLoading: boolean;
 }) {
   const percent = limit > 0 ? Math.round((total / limit) * 100) : 0;
-  const displayPercent = Math.min(percent, 100);
-  const state =
-    percent >= 90 ? "danger" : percent >= 70 ? "warning" : "safe";
-  const barColor = {
-    safe: "bg-[#2f8a64]",
-    warning: "bg-[#d5a72f]",
-    danger: "bg-[#c43d31]",
-  }[state];
+  const isOver = percent >= 100;
+  
+  const status = useMemo(() => {
+    if (percent >= 90) return { color: "bg-red-500", text: "text-red-600", bg: "bg-red-50", label: "위험" };
+    if (percent >= 70) return { color: "bg-amber-500", text: "text-amber-600", bg: "bg-amber-50", label: "주의" };
+    return { color: "bg-emerald-500", text: "text-emerald-600", bg: "bg-emerald-50", label: "안전" };
+  }, [percent]);
 
   return (
-    <article className="rounded-lg border border-[#d7ddd3] bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <Icon className="size-5 text-[#21605a]" />
-            <h2 className="text-lg font-bold">{label}</h2>
+    <div className="group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 transition-all hover:border-slate-200 hover:shadow-md">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className={`flex size-10 items-center justify-center rounded-xl ${status.bg} ${status.text}`}>
+            <Icon className="size-5" />
           </div>
-          <p className="mt-1 text-sm font-medium text-[#66736b]">
-            {description}
-          </p>
+          <div>
+            <h3 className="font-bold text-slate-800">{label}</h3>
+            <p className="text-xs font-medium text-slate-400">
+              한도 {currencyFormatter.format(limit)}
+            </p>
+          </div>
         </div>
-        <span className="rounded-md bg-[#f0f3ee] px-2 py-1 text-sm font-bold text-[#445049]">
-          {limit > 0 ? `${percent}%` : "한도 없음"}
-        </span>
+        <div className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${status.bg} ${status.text}`}>
+          {status.label}
+        </div>
       </div>
 
-      <div className="mt-5">
-        <div className="flex items-baseline justify-between gap-3">
-          <p className="text-2xl font-bold">
-            {isLoading ? "-" : currencyFormatter.format(total)}
-          </p>
-          <p className="text-sm font-semibold text-[#66736b]">
-            / {currencyFormatter.format(limit)}
-          </p>
+      <div className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <span className="text-xl font-bold text-slate-900">
+            {isLoading ? "..." : currencyFormatter.format(total)}
+          </span>
+          <span className={`text-sm font-bold ${status.text}`}>
+            {percent}%
+          </span>
         </div>
-        <div className="mt-3 h-3 overflow-hidden rounded-full bg-[#e6ebe2]">
+        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
           <div
-            className={`h-full rounded-full ${barColor} transition-all duration-500 ease-out`}
-            style={{ width: `${displayPercent}%` }}
+            className={`h-full ${status.color} transition-all duration-700 ease-out`}
+            style={{ width: `${Math.min(percent, 100)}%` }}
           />
         </div>
       </div>
-    </article>
+      
+      {isOver && (
+        <div className="absolute inset-x-0 bottom-0 h-1 bg-red-500 animate-pulse" />
+      )}
+    </div>
   );
 }

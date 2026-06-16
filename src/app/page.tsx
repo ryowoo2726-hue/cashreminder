@@ -13,6 +13,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 
 import {
   categories,
@@ -256,17 +257,23 @@ export default function Home() {
       <div className="mx-auto max-w-xl px-4 pt-8 sm:pt-14 relative z-10">
         {/* Header Section */}
         <header className="mb-6 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 tracking-wider uppercase mb-1">
-              <Sparkles className="size-3.5 text-indigo-500 animate-pulse" />
-              <span>Smart Wallet</span>
+          <div className="flex items-center gap-3">
+            {/* Logo image container */}
+            <div className="relative size-12 overflow-hidden rounded-2xl border border-slate-200/50 bg-white shadow-sm flex items-center justify-center p-0.5">
+              <Image src="/logo.png" alt="Cash Reminder Logo" width={48} height={48} className="w-full h-full object-cover rounded-xl" />
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 bg-clip-text text-transparent">
-              내 소비 요약
-            </h1>
-            <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
-              <CalendarDays className="size-3.5" />
-              <span>{currentMonth}</span>
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 tracking-wider uppercase mb-0.5">
+                <Sparkles className="size-3 text-indigo-500 animate-pulse" />
+                <span>Smart Wallet</span>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 bg-clip-text text-transparent leading-none">
+                내 소비 요약
+              </h1>
+              <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-slate-500">
+                <CalendarDays className="size-3.5" />
+                <span>{currentMonth}</span>
+              </div>
             </div>
           </div>
           <div>

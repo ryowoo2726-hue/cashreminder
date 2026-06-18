@@ -8,9 +8,11 @@ import {
 } from "@notionhq/client";
 
 import {
+  categories,
   emptyTotals,
   getCategoryByLabel,
   isCategoryLabel,
+  type CategoryKey,
   type CategoryLabel,
   type TotalsByCategory,
 } from "@/lib/categories";
@@ -31,9 +33,20 @@ export type ExpenseInput = {
   memo: string;
 };
 
+export type ExpenseRecord = ExpenseInput & {
+  id: string;
+};
+
 export type MonthlyExpenseSummary = {
   totals: TotalsByCategory;
+  transactions: ExpenseRecord[];
+  todayTotal: number;
+  previousPeriodTotal: number;
   period: {
+    start: string;
+    end: string;
+  };
+  previousPeriod: {
     start: string;
     end: string;
   };
@@ -75,7 +88,7 @@ export function validateExpenseInput(value: unknown): ExpenseInput {
   };
 }
 
-export async function createExpense(input: ExpenseInput) {
+export async function createExpense(input: ExpenseInput): Promise<ExpenseRecord> {
   const notion = createNotionClient();
   const dataSourceId = await resolveDataSourceId(notion);
 
@@ -116,18 +129,24 @@ export async function createExpense(input: ExpenseInput) {
     };
   }
 
-  return notion.pages.create({
+  const page = await notion.pages.create({
     parent: {
       data_source_id: dataSourceId,
     },
     properties,
   });
+
+  return {
+    id: page.id,
+    ...input,
+  };
 }
 
 export async function getMonthlyExpenseSummary(): Promise<MonthlyExpenseSummary> {
   const notion = createNotionClient();
   const dataSourceId = await resolveDataSourceId(notion);
   const period = getCurrentMonthPeriod();
+  const previousPeriod = getPreviousMonthToDatePeriod();
   const pages = await collectPaginatedAPI(notion.dataSources.query, {
     data_source_id: dataSourceId,
     filter: {
@@ -146,8 +165,19 @@ export async function getMonthlyExpenseSummary(): Promise<MonthlyExpenseSummary>
         },
       ],
     },
+    sorts: [
+      {
+        property: propertyNames.date,
+        direction: "descending",
+      },
+    ],
     page_size: 100,
   });
+
+  const transactions = pages
+    .filter(isFullPage)
+    .map(readExpenseRecord)
+    .filter((expense): expense is ExpenseRecord => expense !== null);
 
   const totals = pages.reduce<TotalsByCategory>((summary, page) => {
     if (!isFullPage(page)) {
@@ -171,10 +201,60 @@ export async function getMonthlyExpenseSummary(): Promise<MonthlyExpenseSummary>
     return summary;
   }, { ...emptyTotals });
 
+  const previousPages = await collectPaginatedAPI(notion.dataSources.query, {
+    data_source_id: dataSourceId,
+    filter: {
+      and: [
+        {
+          property: propertyNames.date,
+          date: {
+            on_or_after: previousPeriod.start,
+          },
+        },
+        {
+          property: propertyNames.date,
+          date: {
+            before: previousPeriod.end,
+          },
+        },
+      ],
+    },
+    page_size: 100,
+  });
+
+  const today = formatDateOnly(new Date());
+  const todayTotal = transactions.reduce((sum, transaction) => {
+    return transaction.date === today ? sum + transaction.amount : sum;
+  }, 0);
+  const previousPeriodTotal = previousPages.reduce((sum, page) => {
+    if (!isFullPage(page)) {
+      return sum;
+    }
+
+    return sum + readNumberProperty(page, propertyNames.amount);
+  }, 0);
+
   return {
     totals,
+    transactions,
+    todayTotal,
+    previousPeriodTotal,
     period,
+    previousPeriod,
   };
+}
+
+export async function deleteExpense(pageId: string) {
+  const notion = createNotionClient();
+
+  if (!pageId || pageId.length < 16) {
+    throw new Error("삭제할 소비 내역 ID가 올바르지 않습니다.");
+  }
+
+  await notion.pages.update({
+    page_id: pageId,
+    in_trash: true,
+  });
 }
 
 async function resolveDataSourceId(notion: Client) {
@@ -226,12 +306,61 @@ function getCurrentMonthPeriod() {
   };
 }
 
+function getPreviousMonthToDatePeriod() {
+  const now = new Date();
+  const previousStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const previousMonthLastDay = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    0,
+  ).getDate();
+  const comparableDay = Math.min(now.getDate(), previousMonthLastDay);
+  const previousEnd = new Date(
+    now.getFullYear(),
+    now.getMonth() - 1,
+    comparableDay + 1,
+  );
+
+  return {
+    start: formatDateOnly(previousStart),
+    end: formatDateOnly(previousEnd),
+  };
+}
+
 function formatDateOnly(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
+}
+
+function readExpenseRecord(page: PageObjectResponse): ExpenseRecord | null {
+  const amount = readNumberProperty(page, propertyNames.amount);
+  const categoryLabel = readSelectProperty(page, propertyNames.category);
+
+  if (!amount || !categoryLabel || !isCategoryLabel(categoryLabel)) {
+    return null;
+  }
+
+  return {
+    id: page.id,
+    item: readTitleProperty(page, propertyNames.title) || "이름 없는 지출",
+    amount,
+    category: categoryLabel,
+    date: readDateProperty(page, propertyNames.date),
+    memo: readRichTextProperty(page, propertyNames.memo),
+  };
+}
+
+function readTitleProperty(page: PageObjectResponse, propertyName: string) {
+  const property = page.properties[propertyName];
+
+  if (property?.type !== "title") {
+    return "";
+  }
+
+  return property.title.map((item) => item.plain_text).join("").trim();
 }
 
 function readNumberProperty(page: PageObjectResponse, propertyName: string) {
@@ -244,6 +373,26 @@ function readNumberProperty(page: PageObjectResponse, propertyName: string) {
   return property.number ?? 0;
 }
 
+function readDateProperty(page: PageObjectResponse, propertyName: string) {
+  const property = page.properties[propertyName];
+
+  if (property?.type !== "date") {
+    return "";
+  }
+
+  return property.date?.start ?? "";
+}
+
+function readRichTextProperty(page: PageObjectResponse, propertyName: string) {
+  const property = page.properties[propertyName];
+
+  if (property?.type !== "rich_text") {
+    return "";
+  }
+
+  return property.rich_text.map((item) => item.plain_text).join("").trim();
+}
+
 function readSelectProperty(page: PageObjectResponse, propertyName: string) {
   const property = page.properties[propertyName];
 
@@ -252,6 +401,12 @@ function readSelectProperty(page: PageObjectResponse, propertyName: string) {
   }
 
   return property.select?.name ?? null;
+}
+
+export function getCategoryKeyByLabel(label: CategoryLabel): CategoryKey {
+  return (
+    categories.find((category) => category.label === label)?.key ?? "food"
+  );
 }
 
 function normalizeText(value: unknown) {

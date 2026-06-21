@@ -73,6 +73,15 @@ type ExpensePayload = {
   memo: string;
 };
 
+type FixedExpense = {
+  id: string;
+  title: string;
+  amount: number;
+  category: CategoryLabel;
+  dueDay: number;
+  paidMonth: string;
+};
+
 const categoryIcons: Record<
   CategoryKey,
   React.ComponentType<{ className?: string }>
@@ -140,6 +149,7 @@ const categoryConfig: Record<
 const storageKeys = {
   limits: "cashreminder.limits",
   darkMode: "cashreminder.darkMode",
+  fixedExpenses: "cashreminder.fixedExpenses",
 } as const;
 
 const currencyFormatter = new Intl.NumberFormat("ko-KR", {
@@ -165,6 +175,36 @@ function getCategoryKeyByLabel(label: CategoryLabel): CategoryKey {
   return categories.find((category) => category.label === label)?.key ?? "food";
 }
 
+function getCurrentMonthKey() {
+  const date = new Date();
+  const cycleStart =
+    date.getDate() >= 17
+      ? new Date(date.getFullYear(), date.getMonth(), 17)
+      : new Date(date.getFullYear(), date.getMonth() - 1, 17);
+  const year = cycleStart.getFullYear();
+  const month = String(cycleStart.getMonth() + 1).padStart(2, "0");
+
+  return `${year}-${month}-17`;
+}
+
+function readStoredFixedExpenses() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(storageKeys.fixedExpenses);
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsedValue = JSON.parse(storedValue);
+    return Array.isArray(parsedValue) ? (parsedValue as FixedExpense[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function formatKoreanDate(dateValue: string) {
   const date = new Date(`${dateValue}T00:00:00`);
 
@@ -185,6 +225,13 @@ export default function Home() {
   const [draftLimits, setDraftLimits] =
     useState<TotalsByCategory>(emptyTotals);
   const [transactions, setTransactions] = useState<ExpenseRecord[]>([]);
+  const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>(
+    readStoredFixedExpenses,
+  );
+  const [fixedTitle, setFixedTitle] = useState("");
+  const [fixedAmount, setFixedAmount] = useState("");
+  const [fixedCategory, setFixedCategory] = useState<CategoryLabel>("생활 물품");
+  const [fixedDueDay, setFixedDueDay] = useState("1");
   const [selectedCategory, setSelectedCategory] =
     useState<CategoryLabel>("식비");
   const [selectedDetailCategory, setSelectedDetailCategory] =
@@ -228,6 +275,14 @@ export default function Home() {
   const totalLimit = useMemo(() => {
     return Object.values(limits).reduce((sum, value) => sum + value, 0);
   }, [limits]);
+
+  const currentMonthKey = useMemo(() => getCurrentMonthKey(), []);
+
+  const paidFixedExpenseTotal = useMemo(() => {
+    return fixedExpenses.reduce((sum, expense) => {
+      return expense.paidMonth === currentMonthKey ? sum + expense.amount : sum;
+    }, 0);
+  }, [currentMonthKey, fixedExpenses]);
 
   const recentTransactions = useMemo(() => transactions.slice(0, 20), [transactions]);
 
@@ -276,9 +331,33 @@ export default function Home() {
     return "지난달 같은 기간과 거의 같은 속도로 소비 중입니다.";
   }, [grandTotal, previousPeriodTotal, todayTotal]);
 
+  const comparePercent = useMemo(() => {
+    if (previousPeriodTotal <= 0) return 0;
+    const diff = previousPeriodTotal - grandTotal;
+    return Math.round((Math.abs(diff) / previousPeriodTotal) * 100);
+  }, [grandTotal, previousPeriodTotal]);
+
+  const compareStatus = useMemo(() => {
+    if (previousPeriodTotal <= 0) return null;
+    const diff = previousPeriodTotal - grandTotal;
+    if (diff > 0) {
+      return { label: `지난달 대비 ${comparePercent}% 절약 중`, type: "save" };
+    } else if (diff < 0) {
+      return { label: `지난달 대비 ${comparePercent}% 초과 소비 중`, type: "over" };
+    }
+    return { label: "지난달과 동일한 속도", type: "equal" };
+  }, [grandTotal, previousPeriodTotal, comparePercent]);
+
   useEffect(() => {
     window.localStorage.setItem(storageKeys.darkMode, String(isDarkMode));
   }, [isDarkMode]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      storageKeys.fixedExpenses,
+      JSON.stringify(fixedExpenses),
+    );
+  }, [fixedExpenses]);
 
   useEffect(() => {
     const observerOptions = {
@@ -506,6 +585,66 @@ export default function Home() {
     setTimeout(() => setSuccessMessage(""), 2500);
   }
 
+  function handleAddFixedExpense(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const parsedAmount = Number(fixedAmount);
+    const parsedDueDay = Number(fixedDueDay);
+
+    if (!fixedTitle.trim()) {
+      setError("고정 지출 이름을 입력해 주세요.");
+      return;
+    }
+
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setError("고정 지출 금액은 0보다 크게 입력해 주세요.");
+      return;
+    }
+
+    const newFixedExpense: FixedExpense = {
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}`,
+      title: fixedTitle.trim(),
+      amount: Math.round(parsedAmount),
+      category: fixedCategory,
+      dueDay: Math.min(Math.max(Math.round(parsedDueDay || 1), 1), 31),
+      paidMonth: "",
+    };
+
+    setFixedExpenses((currentExpenses) => [
+      newFixedExpense,
+      ...currentExpenses,
+    ]);
+    setFixedTitle("");
+    setFixedAmount("");
+    setFixedDueDay("1");
+    setError("");
+    setSuccessMessage("고정 지출이 추가되었습니다.");
+    setTimeout(() => setSuccessMessage(""), 2500);
+  }
+
+  function handleToggleFixedExpense(expenseId: string) {
+    setFixedExpenses((currentExpenses) =>
+      currentExpenses.map((expense) =>
+        expense.id === expenseId
+          ? {
+              ...expense,
+              paidMonth:
+                expense.paidMonth === currentMonthKey ? "" : currentMonthKey,
+            }
+          : expense,
+      ),
+    );
+  }
+
+  function handleDeleteFixedExpense(expenseId: string) {
+    setFixedExpenses((currentExpenses) =>
+      currentExpenses.filter((expense) => expense.id !== expenseId),
+    );
+  }
+
   function scrollToSection(target: "dashboard" | "transactions" | "form") {
     const ref =
       target === "dashboard"
@@ -521,10 +660,11 @@ export default function Home() {
     year: "numeric",
     month: "long",
   });
+  const cycleStartLabel = currentMonthKey.replaceAll("-", ".");
 
   return (
     <main
-      className={`min-h-screen pb-28 transition-colors duration-300 ${
+      className={`min-h-screen pb-28 transition-colors duration-300 bg-grid-pattern ${
         isDarkMode
           ? "dark bg-slate-950 text-slate-100"
           : "bg-[#F8FAFC] text-[#0F172A]"
@@ -568,6 +708,7 @@ export default function Home() {
               >
                 <CalendarDays className="size-3.5" />
                 <span>{currentMonth}</span>
+                <span>· {cycleStartLabel} 시작</span>
               </div>
             </div>
           </div>
@@ -577,7 +718,7 @@ export default function Home() {
             onClick={() => setIsDarkMode((current) => !current)}
             className={`flex size-10 shrink-0 items-center justify-center rounded-2xl border shadow-sm transition ${
               isDarkMode
-                ? "border-slate-700 bg-slate-900 text-amber-300"
+                ? "border-slate-700 bg-slate-900 text-amber-300 animate-none"
                 : "border-slate-200 bg-white text-slate-700"
             }`}
             title="다크 모드 전환"
@@ -590,30 +731,61 @@ export default function Home() {
           </button>
         </header>
 
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950/80 to-slate-950 p-6 text-white shadow-2xl shadow-indigo-500/10 border border-indigo-900/30">
+        <section className={`relative overflow-hidden rounded-3xl p-6 text-white shadow-2xl transition-all duration-300 border ${
+          grandTotal > totalLimit
+            ? "bg-gradient-to-br from-slate-900 via-rose-950/70 to-slate-950 border-rose-500/30 shadow-rose-500/5 animate-danger-pulse"
+            : "bg-gradient-to-br from-slate-900 via-indigo-950/80 to-slate-950 border-indigo-900/30 shadow-indigo-500/10"
+        }`}>
           <div className="dashboard-aura" />
-          <div className="relative z-10">
+          <div className="relative z-10 space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold tracking-wide text-slate-400 sm:text-sm">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
                 이번 달 총 지출액
-              </p>
-              <TrendingUp className="size-5 text-emerald-300" />
+              </span>
+              {compareStatus && (
+                <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-extrabold border ${
+                  compareStatus.type === "save"
+                    ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                    : compareStatus.type === "over"
+                    ? "bg-rose-500/10 text-rose-300 border-rose-500/20"
+                    : "bg-slate-500/10 text-slate-300 border-slate-500/20"
+                }`}>
+                  {compareStatus.label}
+                </span>
+              )}
             </div>
-            <p className="mt-2 text-3xl font-extrabold tracking-tight sm:text-4xl">
-              {isLoading ? "..." : currencyFormatter.format(grandTotal)}
-            </p>
-
-            <div className="mt-5">
-              <div className="mb-2 flex justify-between text-[11px] font-semibold text-slate-400">
-                <span>총 한도 {currencyFormatter.format(totalLimit)}</span>
-                <span className="text-emerald-300">
-                  {totalLimit > 0 ? Math.round((grandTotal / totalLimit) * 100) : 0}
-                  %
+            
+            <div className="flex items-baseline justify-between">
+              <p className="text-3xl font-black tracking-tight sm:text-4xl">
+                {isLoading ? "..." : currencyFormatter.format(grandTotal)}
+              </p>
+              
+              <div className="text-right">
+                <span className="text-[10px] font-bold text-slate-400 block uppercase">
+                  남은 예산
+                </span>
+                <span className={`text-sm font-extrabold ${grandTotal > totalLimit ? "text-rose-400" : "text-emerald-400"}`}>
+                  {isLoading ? "..." : currencyFormatter.format(totalLimit - grandTotal)}
                 </span>
               </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800/80 p-[1px]">
+            </div>
+
+            <div className="space-y-1.5 pt-2">
+              <div className="flex justify-between text-[11px] font-bold text-slate-400">
+                <span>총 예산 {currencyFormatter.format(totalLimit)}</span>
+                <span>
+                  {totalLimit > 0 ? Math.round((grandTotal / totalLimit) * 100) : 0}%
+                </span>
+              </div>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-800/80 p-[2px]">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 shadow-[0_0_8px_rgba(52,211,153,0.5)] transition-all duration-1000 ease-out"
+                  className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                    grandTotal > totalLimit
+                      ? "bg-gradient-to-r from-rose-500 to-red-600 shadow-[0_0_12px_rgba(244,63,94,0.5)]"
+                      : (totalLimit > 0 ? (grandTotal / totalLimit) * 100 : 0) >= 80
+                      ? "bg-gradient-to-r from-amber-500 to-rose-500 shadow-[0_0_8px_rgba(245,158,11,0.4)]"
+                      : "bg-gradient-to-r from-emerald-400 via-teal-400 to-indigo-400 shadow-[0_0_8px_rgba(52,211,153,0.3)]"
+                  }`}
                   style={{
                     width: `${Math.min(
                       totalLimit > 0 ? (grandTotal / totalLimit) * 100 : 0,
@@ -627,39 +799,45 @@ export default function Home() {
         </section>
 
         <section
-          className={`rounded-3xl border p-4 shadow-sm ${
+          className={`rounded-3xl border p-4.5 shadow-sm transition-all duration-300 ${
             isDarkMode
-              ? "border-slate-800 bg-slate-900/80"
-              : "border-indigo-100 bg-white/80"
+              ? "border-slate-800/80 bg-slate-900/40 backdrop-blur-md"
+              : "border-indigo-50/50 bg-white/60 backdrop-blur-md"
           }`}
         >
-          <div className="flex items-start gap-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-300">
+          <div className="flex items-start gap-3.5">
+            <div className={`flex size-10 shrink-0 items-center justify-center rounded-2xl ${
+              grandTotal <= previousPeriodTotal || previousPeriodTotal === 0
+                ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-300"
+                : "bg-rose-500/10 text-rose-600 dark:bg-rose-500/20 dark:text-rose-300"
+            }`}>
               {grandTotal <= previousPeriodTotal || previousPeriodTotal === 0 ? (
                 <TrendingDown className="size-5" />
               ) : (
                 <TrendingUp className="size-5" />
               )}
             </div>
-            <div>
+            <div className="flex-1 min-w-0">
               <p
-                className={`text-xs font-bold uppercase tracking-wide ${
+                className={`text-[10px] font-extrabold uppercase tracking-wider ${
                   isDarkMode ? "text-slate-400" : "text-slate-500"
                 }`}
               >
                 Smart Insight
               </p>
-              <p className="mt-1 text-sm font-bold leading-5">{insight}</p>
-              <p
-                className={`mt-2 text-xs font-semibold ${
-                  isDarkMode ? "text-slate-500" : "text-slate-400"
-                }`}
-              >
-                오늘 소비 {currencyFormatter.format(todayTotal)}
-              </p>
+              <p className="mt-1 text-sm font-extrabold leading-relaxed text-slate-800 dark:text-slate-100">{insight}</p>
+              <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 dark:border-slate-800/60 pt-2 text-[11px] font-semibold">
+                <span className={isDarkMode ? "text-slate-500" : "text-slate-400"}>
+                  오늘 지출
+                </span>
+                <span className={`font-extrabold ${isDarkMode ? "text-slate-200" : "text-slate-700"}`}>
+                  {currencyFormatter.format(todayTotal)}
+                </span>
+              </div>
             </div>
           </div>
         </section>
+
 
         <section className="mb-6">
           <div className="mb-3.5 flex items-center justify-between">
@@ -721,22 +899,22 @@ export default function Home() {
           }`}
           style={{
             boxShadow: isDarkMode 
-              ? `0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 0 20px -5px ${selectedTheme.shadowColor}`
-              : `0 10px 30px -10px rgba(0, 0, 0, 0.04), 0 0 20px -5px ${selectedTheme.shadowColor}`
+              ? `0 15px 35px -10px rgba(0, 0, 0, 0.4), 0 0 24px -6px ${selectedTheme.shadowColor}`
+              : `0 15px 35px -10px rgba(99, 102, 241, 0.05), 0 0 24px -6px ${selectedTheme.shadowColor}`
           }}
         >
-          <div className="mb-5 flex items-center gap-2">
+          <div className="mb-5 flex items-center gap-2.5">
             <div
-              className={`flex size-9 items-center justify-center rounded-xl ${selectedTheme.iconBg} ${selectedTheme.iconColor}`}
+              className={`flex size-9 items-center justify-center rounded-xl transition-all duration-300 ${selectedTheme.iconBg} ${selectedTheme.iconColor}`}
             >
               <Plus className="size-5" />
             </div>
-            <h2 className="text-lg font-bold">빠른 지출 기록</h2>
+            <h2 className="text-base font-extrabold tracking-tight">빠른 지출 기록</h2>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
                 카테고리 선택
               </label>
               <div className="grid grid-cols-3 gap-2.5">
@@ -750,12 +928,12 @@ export default function Home() {
                       key={category.key}
                       type="button"
                       onClick={() => setSelectedCategory(category.label)}
-                      className={`flex flex-col items-center justify-center gap-1.5 rounded-2xl border py-3 transition-all duration-300 active:scale-95 ${
+                      className={`group flex flex-col items-center justify-center gap-1.5 rounded-2xl border py-3 transition-all duration-300 active:scale-95 cursor-pointer ${
                         isSelected
                           ? config.activeClass
                           : isDarkMode
-                            ? "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700"
-                            : "border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200"
+                            ? "border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700/80 hover:text-slate-200"
+                            : "border-slate-200/50 bg-slate-50 text-slate-500 hover:border-indigo-100 hover:text-slate-800"
                       }`}
                       style={{
                         boxShadow: isSelected
@@ -763,7 +941,7 @@ export default function Home() {
                           : "none",
                       }}
                     >
-                      <Icon className="size-5" />
+                      <Icon className={`size-5 transition-transform duration-300 group-hover:scale-110`} />
                       <span className="text-[11px] font-bold">
                         {category.label}
                       </span>
@@ -774,7 +952,7 @@ export default function Home() {
             </div>
 
             <div>
-              <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
                 금액
               </label>
               <div className="relative">
@@ -784,12 +962,12 @@ export default function Home() {
                   inputMode="numeric"
                   pattern="[0-9]*"
                   placeholder="0"
-                  className={`w-full rounded-2xl border border-transparent px-5 py-3.5 text-xl font-extrabold outline-none transition-all focus:ring-2 ${
+                  className={`w-full rounded-2xl border px-5 py-3.5 text-2xl font-black outline-none transition-all focus:ring-2 ${
                     selectedTheme.focusClass
                   } ${
                     isDarkMode
-                      ? "bg-slate-950/70 text-white"
-                      : "bg-slate-50/70 text-slate-950 focus:bg-white"
+                      ? "border-slate-800 bg-slate-950/80 text-white focus:bg-slate-950"
+                      : "border-slate-200 bg-slate-50 text-slate-950 focus:bg-white"
                   }`}
                 />
                 <span className="absolute right-5 top-1/2 -translate-y-1/2 text-sm font-bold text-slate-400">
@@ -808,10 +986,10 @@ export default function Home() {
                         return String(current + preset);
                       });
                     }}
-                    className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold shadow-sm transition-all active:scale-95 ${
+                    className={`rounded-xl border px-3 py-1.5 text-[11px] font-bold shadow-sm transition-all active:scale-95 cursor-pointer ${
                       isDarkMode
-                        ? "border-slate-800 bg-slate-950 text-slate-300"
-                        : "border-slate-200/50 bg-white text-slate-600"
+                        ? "border-slate-800 bg-slate-950 hover:bg-slate-900 text-slate-300"
+                        : "border-slate-200/60 bg-white hover:bg-slate-50 hover:border-slate-300 text-slate-600"
                     }`}
                   >
                     +{preset >= 10000 ? `${preset / 10000}만` : `${preset / 1000}천`}
@@ -820,7 +998,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setAmount("")}
-                  className="rounded-xl border border-rose-100 bg-rose-50/70 px-2.5 py-1.5 text-[11px] font-bold text-rose-600 shadow-sm transition-all active:scale-95"
+                  className="rounded-xl border border-rose-100 dark:border-rose-950 bg-rose-50/70 dark:bg-rose-950/20 px-3 py-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 shadow-sm transition-all active:scale-95 cursor-pointer hover:bg-rose-100/60 dark:hover:bg-rose-950/40"
                 >
                   초기화
                 </button>
@@ -837,19 +1015,19 @@ export default function Home() {
                 isDarkMode={isDarkMode}
               />
               <label>
-                <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
                   날짜
                 </span>
                 <input
                   value={date}
                   onChange={(event) => setDate(event.target.value)}
                   type="date"
-                  className={`w-full rounded-xl border border-transparent px-4 py-2.5 text-xs font-bold outline-none transition-all focus:ring-2 ${
+                  className={`w-full rounded-xl border px-4 py-2.5 text-xs font-bold outline-none transition-all focus:ring-2 ${
                     selectedTheme.focusClass
                   } ${
                     isDarkMode
-                      ? "bg-slate-950/70 text-white"
-                      : "bg-slate-50/70 text-slate-700 focus:bg-white"
+                      ? "border-slate-800 bg-slate-950/80 text-white focus:bg-slate-950"
+                      : "border-slate-200 bg-slate-50 text-slate-700 focus:bg-white"
                   }`}
                 />
               </label>
@@ -867,7 +1045,7 @@ export default function Home() {
             <button
               type="submit"
               disabled={isSaving}
-              className={`hover-scale flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-gradient-to-r py-3.5 text-base font-bold text-white shadow-md transition-all active:scale-[0.98] disabled:bg-slate-300 disabled:shadow-none ${selectedTheme.buttonClass}`}
+              className={`hover-scale flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-gradient-to-r py-3.5 text-base font-extrabold text-white shadow-lg transition-all active:scale-[0.98] disabled:bg-slate-300 dark:disabled:bg-slate-800 disabled:shadow-none ${selectedTheme.buttonClass}`}
             >
               {isSaving ? (
                 <Loader2 className="size-5 animate-spin" />
@@ -878,13 +1056,13 @@ export default function Home() {
             </button>
 
             {error && (
-              <div className="rounded-xl border border-red-100 bg-red-50 p-3.5 text-xs font-bold text-red-600">
+              <div className="rounded-xl border border-rose-100 dark:border-rose-950 bg-rose-50/70 dark:bg-rose-950/20 p-3.5 text-xs font-bold text-rose-600 dark:text-rose-400 delete-confirm-badge">
                 {error}
               </div>
             )}
 
             {successMessage && (
-              <div className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-3.5 text-xs font-bold text-emerald-600">
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-100 dark:border-emerald-950 bg-emerald-50/70 dark:bg-emerald-950/20 p-3.5 text-xs font-bold text-emerald-600 dark:text-emerald-400 delete-confirm-badge">
                 <CheckCircle2 className="size-4" />
                 {successMessage}
               </div>
@@ -893,6 +1071,24 @@ export default function Home() {
         </section>
 
         <section ref={transactionsRef} className="mt-6">
+          <FixedExpenseSection
+            fixedExpenses={fixedExpenses}
+            fixedTitle={fixedTitle}
+            fixedAmount={fixedAmount}
+            fixedCategory={fixedCategory}
+            fixedDueDay={fixedDueDay}
+            currentMonthKey={currentMonthKey}
+            paidFixedExpenseTotal={paidFixedExpenseTotal}
+            isDarkMode={isDarkMode}
+            onAdd={handleAddFixedExpense}
+            onTitleChange={setFixedTitle}
+            onAmountChange={setFixedAmount}
+            onCategoryChange={setFixedCategory}
+            onDueDayChange={setFixedDueDay}
+            onToggle={handleToggleFixedExpense}
+            onDelete={handleDeleteFixedExpense}
+          />
+
           <div className="mb-3.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ReceiptText className="size-4 text-indigo-500" />
@@ -994,6 +1190,7 @@ export default function Home() {
       {isLimitEditorOpen && (
         <LimitEditor
           draftLimits={draftLimits}
+          totals={totals}
           onChange={setDraftLimits}
           onSave={handleSaveLimits}
           onClose={() => setIsLimitEditorOpen(false)}
@@ -1070,39 +1267,66 @@ function BudgetGauge({
 }) {
   const percent = limit > 0 ? Math.round((total / limit) * 100) : 0;
   const isOver = percent >= 100;
+  const remaining = limit - total;
   const config = categoryConfig[categoryKey];
+
   const status = useMemo(() => {
     if (percent >= 90) {
-      return { text: "text-rose-500", bg: "bg-rose-50/80", label: "위험" };
+      return { 
+        text: "text-rose-600 dark:text-rose-400", 
+        bg: "bg-rose-500/10 border-rose-500/20", 
+        label: "위험",
+        dotColor: "bg-rose-500 status-pulse-orange" 
+      };
     }
     if (percent >= 70) {
-      return { text: "text-amber-500", bg: "bg-amber-50/80", label: "주의" };
+      return { 
+        text: "text-amber-600 dark:text-amber-400", 
+        bg: "bg-amber-500/10 border-amber-500/20", 
+        label: "주의",
+        dotColor: "bg-amber-500" 
+      };
     }
-    return { text: "text-emerald-500", bg: "bg-emerald-50/80", label: "안전" };
+    return { 
+      text: "text-emerald-600 dark:text-emerald-400", 
+      bg: "bg-emerald-500/10 border-emerald-500/20", 
+      label: "안전",
+      dotColor: "bg-emerald-500" 
+    };
   }, [percent]);
+
+  const remainingFormatted = useMemo(() => {
+    const absVal = Math.abs(remaining);
+    const text = absVal >= 10000 
+      ? `${numberFormatter.format(Math.round(absVal / 10000))}만` 
+      : `${numberFormatter.format(absVal)}`;
+    return text + "원";
+  }, [remaining]);
+
   const radius = 24;
-  const strokeWidth = 4;
+  const strokeWidth = 4.5;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset =
     circumference - (circumference * Math.min(percent, 100)) / 100;
 
   return (
     <div
-      className={`group relative flex min-h-40 flex-col items-center justify-between rounded-2xl border p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md ${
+      className={`group relative flex min-h-40 flex-col items-center justify-between rounded-2xl border p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg ${
         isOver
-          ? "animate-danger-pulse border-rose-300"
+          ? "animate-danger-pulse border-rose-400 bg-rose-500/5"
           : isDarkMode
-            ? "border-slate-800 bg-slate-900/80 hover:border-slate-700"
-            : "border-slate-100 bg-white/80 hover:border-slate-200"
+            ? "border-slate-800 bg-slate-900/60 hover:border-slate-700/80 hover:shadow-indigo-500/5 backdrop-blur-md"
+            : "border-slate-100 bg-white/70 hover:border-indigo-100/80 hover:shadow-indigo-500/5 backdrop-blur-md"
       }`}
     >
       <span
-        className={`absolute right-2 top-2 rounded-full px-1.5 py-0.5 text-[9px] font-extrabold tracking-tight ${status.bg} ${status.text}`}
+        className={`absolute right-2 top-2 flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-extrabold tracking-tight border ${status.bg} ${status.text}`}
       >
+        {percent >= 70 && <span className={`size-1.5 rounded-full ${status.dotColor}`} />}
         {percent}%
       </span>
 
-      <div className="relative mb-2.5 mt-1.5 flex size-14 items-center justify-center">
+      <div className="relative mb-2.5 mt-2.5 flex size-14 items-center justify-center">
         <svg className="absolute inset-0 h-full w-full -rotate-90">
           <circle
             cx="28"
@@ -1139,7 +1363,7 @@ function BudgetGauge({
         </svg>
 
         <div
-          className={`z-10 flex size-8 items-center justify-center rounded-full ${config.iconBg} ${config.iconColor} shadow-sm`}
+          className={`z-10 flex size-8 items-center justify-center rounded-full ${config.iconBg} ${config.iconColor} shadow-sm transition-transform duration-300 group-hover:scale-110`}
         >
           <Icon className="size-4" />
         </div>
@@ -1148,22 +1372,22 @@ function BudgetGauge({
       <div className="mt-0.5 w-full text-center">
         <h3
           className={`text-xs font-bold leading-tight ${
-            isDarkMode ? "text-slate-200" : "text-slate-700"
+            isDarkMode ? "text-slate-300" : "text-slate-600"
           }`}
         >
           {label}
         </h3>
         <p
-          className={`mt-1 text-sm font-extrabold leading-none sm:text-base ${
+          className={`mt-1 text-sm font-black leading-none sm:text-base ${
             isDarkMode ? "text-white" : "text-slate-900"
           }`}
         >
           {isLoading ? (
-            <span className="inline-block h-3.5 w-8 animate-pulse rounded bg-slate-100" />
+            <span className="inline-block h-3.5 w-8 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
           ) : (
             numberFormatter.format(total)
           )}
-          <span className="ml-0.5 text-[10px] font-bold text-slate-500">
+          <span className="ml-0.5 text-[9px] font-bold text-slate-500">
             원
           </span>
         </p>
@@ -1173,8 +1397,230 @@ function BudgetGauge({
             ? `${numberFormatter.format(limit / 10000)}만`
             : `${numberFormatter.format(limit)}원`}
         </p>
+        <p
+          className={`mt-1.5 whitespace-nowrap text-[10px] font-extrabold leading-none ${
+            remaining >= 0 ? "text-emerald-500 dark:text-emerald-400" : "text-rose-500 dark:text-rose-400"
+          }`}
+        >
+          {remaining >= 0 ? "남음 " : "초과 "}
+          {remainingFormatted}
+        </p>
       </div>
     </div>
+  );
+}
+
+function FixedExpenseSection({
+  fixedExpenses,
+  fixedTitle,
+  fixedAmount,
+  fixedCategory,
+  fixedDueDay,
+  currentMonthKey,
+  paidFixedExpenseTotal,
+  isDarkMode,
+  onAdd,
+  onTitleChange,
+  onAmountChange,
+  onCategoryChange,
+  onDueDayChange,
+  onToggle,
+  onDelete,
+}: {
+  fixedExpenses: FixedExpense[];
+  fixedTitle: string;
+  fixedAmount: string;
+  fixedCategory: CategoryLabel;
+  fixedDueDay: string;
+  currentMonthKey: string;
+  paidFixedExpenseTotal: number;
+  isDarkMode: boolean;
+  onAdd: (event: FormEvent<HTMLFormElement>) => void;
+  onTitleChange: (value: string) => void;
+  onAmountChange: (value: string) => void;
+  onCategoryChange: (value: CategoryLabel) => void;
+  onDueDayChange: (value: string) => void;
+  onToggle: (expenseId: string) => void;
+  onDelete: (expenseId: string) => void;
+}) {
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const timer = setTimeout(() => {
+      setConfirmDeleteId(null);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [confirmDeleteId]);
+
+  return (
+    <section
+      className={`mb-6 rounded-3xl border p-5 shadow-sm transition-all duration-300 ${
+        isDarkMode
+          ? "border-slate-800 bg-slate-900/60 backdrop-blur-md"
+          : "border-slate-100 bg-white/70 backdrop-blur-md"
+      }`}
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <WalletCards className="size-4 text-indigo-500" />
+            <h2 className="text-sm font-extrabold uppercase tracking-wide">
+              고정 지출 체크
+            </h2>
+          </div>
+          <p className="mt-1 text-xs font-semibold text-slate-400">
+            이번 달 체크 완료 {currencyFormatter.format(paidFixedExpenseTotal)}
+          </p>
+        </div>
+        <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/50 px-2.5 py-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
+          {fixedExpenses.length}개
+        </span>
+      </div>
+
+      <form onSubmit={onAdd} className="grid gap-2">
+        <div className="grid grid-cols-[1fr_96px] gap-2">
+          <input
+            value={fixedTitle}
+            onChange={(event) => onTitleChange(event.target.value)}
+            placeholder="예: 넷플릭스, 보험료"
+            className={`rounded-xl border px-3 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${
+              isDarkMode
+                ? "border-slate-800 bg-slate-950 text-white focus:bg-slate-900 focus:border-transparent"
+                : "border-slate-200 bg-slate-50 text-slate-800 focus:bg-white focus:border-transparent"
+            }`}
+          />
+          <input
+            value={fixedAmount}
+            onChange={(event) => onAmountChange(event.target.value)}
+            inputMode="numeric"
+            placeholder="금액"
+            className={`rounded-xl border px-3 py-2.5 text-right text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${
+              isDarkMode
+                ? "border-slate-800 bg-slate-950 text-white focus:bg-slate-900 focus:border-transparent"
+                : "border-slate-200 bg-slate-50 text-slate-800 focus:bg-white focus:border-transparent"
+            }`}
+          />
+        </div>
+        <div className="grid grid-cols-[1fr_76px_72px] gap-2">
+          <select
+            value={fixedCategory}
+            onChange={(event) =>
+              onCategoryChange(event.target.value as CategoryLabel)
+            }
+            className={`rounded-xl border px-3 py-2.5 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${
+              isDarkMode
+                ? "border-slate-800 bg-slate-950 text-white focus:bg-slate-900 focus:border-transparent"
+                : "border-slate-200 bg-slate-50 text-slate-800 focus:bg-white focus:border-transparent"
+            }`}
+          >
+            {categories.map((category) => (
+              <option key={category.key} value={category.label}>
+                {category.label}
+              </option>
+            ))}
+          </select>
+          <input
+            value={fixedDueDay}
+            onChange={(event) => onDueDayChange(event.target.value)}
+            inputMode="numeric"
+            placeholder="일"
+            className={`rounded-xl border px-3 py-2.5 text-center text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${
+              isDarkMode
+                ? "border-slate-800 bg-slate-950 text-white focus:bg-slate-900 focus:border-transparent"
+                : "border-slate-200 bg-slate-50 text-slate-800 focus:bg-white focus:border-transparent"
+            }`}
+          />
+          <button
+            type="submit"
+            className="rounded-xl bg-indigo-500 hover:bg-indigo-600 text-xs font-extrabold text-white transition-all active:scale-95 cursor-pointer"
+          >
+            추가
+          </button>
+        </div>
+      </form>
+
+      <div className="mt-4 space-y-2">
+        {fixedExpenses.length === 0 ? (
+          <p className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 p-4 text-center text-xs font-bold text-slate-400">
+            매달 나가는 항목을 추가해두면 2번 탭에서 바로 체크할 수 있어요.
+          </p>
+        ) : (
+          fixedExpenses.map((expense) => {
+            const categoryKey = getCategoryKeyByLabel(expense.category);
+            const Icon = categoryIcons[categoryKey];
+            const config = categoryConfig[categoryKey];
+            const isPaid = expense.paidMonth === currentMonthKey;
+            const isDeletingConfirmed = confirmDeleteId === expense.id;
+
+            return (
+              <div
+                key={expense.id}
+                className={`flex items-center gap-3 rounded-2xl border p-3 transition-all duration-300 ${
+                  isPaid ? "opacity-60" : "opacity-100"
+                } ${
+                  isDarkMode
+                    ? "border-slate-800 bg-slate-950/70"
+                    : "border-slate-200/40 bg-slate-50/70"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={isPaid}
+                  onChange={() => onToggle(expense.id)}
+                  className="custom-checkbox shrink-0"
+                  title="이번 달 납부 체크"
+                />
+                <div
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-xl transition-all duration-300 ${config.iconBg} ${config.iconColor}`}
+                >
+                  <Icon className="size-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p
+                      className={`truncate text-sm font-extrabold transition-all duration-300 ${
+                        isPaid ? "text-slate-400 dark:text-slate-500 line-through" : ""
+                      }`}
+                    >
+                      {expense.title}
+                    </p>
+                    <p className={`shrink-0 text-xs font-extrabold transition-all duration-300 ${
+                      isPaid ? "text-slate-400 dark:text-slate-500" : ""
+                    }`}>
+                      {currencyFormatter.format(expense.amount)}
+                    </p>
+                  </div>
+                  <p className="mt-0.5 text-[11px] font-semibold text-slate-400">
+                    매월 {expense.dueDay}일 · {expense.category}
+                  </p>
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isDeletingConfirmed) {
+                      onDelete(expense.id);
+                      setConfirmDeleteId(null);
+                    } else {
+                      setConfirmDeleteId(expense.id);
+                    }
+                  }}
+                  className={`flex shrink-0 items-center justify-center rounded-xl transition-all duration-200 cursor-pointer ${
+                    isDeletingConfirmed
+                      ? "px-2.5 py-1 text-[11px] font-bold bg-rose-500 text-white hover:bg-rose-600 animate-pulse delete-confirm-badge"
+                      : "size-8 text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 hover:text-rose-500"
+                  }`}
+                  title={isDeletingConfirmed ? "정말 삭제할까요?" : "고정 지출 삭제"}
+                >
+                  {isDeletingConfirmed ? "삭제" : <Trash2 className="size-4" />}
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1191,18 +1637,27 @@ function TransactionRow({
   isDeleting: boolean;
   onDelete: (transaction: ExpenseRecord) => void;
 }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const categoryKey = getCategoryKeyByLabel(transaction.category);
   const Icon = categoryIcons[categoryKey];
   const config = categoryConfig[categoryKey];
 
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const timer = setTimeout(() => {
+      setConfirmDelete(false);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [confirmDelete]);
+
   return (
     <div
-      className={`transaction-card flex items-center gap-3 rounded-2xl border p-3 shadow-sm ${
+      className={`transaction-card flex items-center gap-3 rounded-2xl border p-3.5 shadow-sm transition-all duration-300 ${
         isNew ? "transaction-card-new" : ""
       } ${
         isDarkMode
-          ? "border-slate-800 bg-slate-900"
-          : "border-slate-100 bg-white"
+          ? "border-slate-800 bg-slate-900/80 hover:bg-slate-900"
+          : "border-slate-100 bg-white hover:bg-slate-50"
       }`}
     >
       <div
@@ -1213,24 +1668,38 @@ function TransactionRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
           <p className="truncate text-sm font-extrabold">{transaction.item}</p>
-          <p className="shrink-0 text-sm font-extrabold">
+          <p className="shrink-0 text-sm font-extrabold text-slate-800 dark:text-slate-100">
             {currencyFormatter.format(transaction.amount)}
           </p>
         </div>
-        <p className="mt-0.5 truncate text-xs font-semibold text-slate-400">
+        <p className="mt-0.5 truncate text-[11px] font-semibold text-slate-400">
           {transaction.category}
           {transaction.memo ? ` · ${transaction.memo}` : ""}
         </p>
       </div>
+      
       <button
         type="button"
-        onClick={() => onDelete(transaction)}
+        onClick={() => {
+          if (confirmDelete) {
+            onDelete(transaction);
+            setConfirmDelete(false);
+          } else {
+            setConfirmDelete(true);
+          }
+        }}
         disabled={isDeleting}
-        className="flex size-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-50"
-        title="삭제"
+        className={`flex shrink-0 items-center justify-center rounded-xl transition-all duration-200 cursor-pointer disabled:opacity-50 ${
+          confirmDelete
+            ? "px-2.5 py-1 text-[11px] font-bold bg-rose-500 text-white hover:bg-rose-600 animate-pulse delete-confirm-badge"
+            : "size-9 text-slate-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 hover:text-rose-500"
+        }`}
+        title={confirmDelete ? "정말 삭제할까요?" : "삭제"}
       >
         {isDeleting ? (
           <Loader2 className="size-4 animate-spin" />
+        ) : confirmDelete ? (
+          "삭제"
         ) : (
           <Trash2 className="size-4" />
         )}
@@ -1266,29 +1735,31 @@ function TransactionSkeleton({ isDarkMode }: { isDarkMode: boolean }) {
 
 function LimitEditor({
   draftLimits,
+  totals,
   onChange,
   onSave,
   onClose,
   isDarkMode,
 }: {
   draftLimits: TotalsByCategory;
+  totals: TotalsByCategory;
   onChange: (limits: TotalsByCategory) => void;
   onSave: () => void;
   onClose: () => void;
   isDarkMode: boolean;
 }) {
   return (
-    <div className="modal-overlay fixed inset-0 z-40 flex items-end bg-slate-950/50 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+    <div className="modal-overlay fixed inset-0 z-40 flex items-end bg-slate-950/60 p-4 backdrop-blur-md sm:items-center sm:justify-center">
       <div
-        className={`modal-content w-full max-w-md rounded-3xl border p-5 shadow-2xl ${
+        className={`modal-content w-full max-w-md rounded-3xl border p-6 shadow-2xl transition-all duration-300 ${
           isDarkMode
-            ? "border-slate-800 bg-slate-950 text-white"
-            : "border-slate-100 bg-white text-slate-950"
+            ? "border-slate-800/80 bg-slate-950/95 text-white"
+            : "border-slate-200/60 bg-white/95 text-slate-950"
         }`}
       >
         <div className="mb-5 flex items-center justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-indigo-500">
+            <p className="text-xs font-bold uppercase tracking-wider text-indigo-500">
               Budget Editor
             </p>
             <h2 className="text-xl font-extrabold">카테고리별 예산 설정</h2>
@@ -1296,7 +1767,11 @@ function LimitEditor({
           <button
             type="button"
             onClick={onClose}
-            className="flex size-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500"
+            className={`flex size-9 items-center justify-center rounded-xl transition cursor-pointer ${
+              isDarkMode 
+                ? "bg-slate-900 hover:bg-slate-800 text-slate-400" 
+                : "bg-slate-100 hover:bg-slate-200 text-slate-500"
+            }`}
           >
             <X className="size-4" />
           </button>
@@ -1306,10 +1781,13 @@ function LimitEditor({
           {categories.map((category) => {
             const Icon = categoryIcons[category.key];
             const config = categoryConfig[category.key];
+            const currentSpent = totals[category.key];
+            const draftVal = draftLimits[category.key];
+            const isExceeded = currentSpent > draftVal;
 
             return (
-              <div key={category.key}>
-                <div className="mb-2 flex items-center justify-between">
+              <div key={category.key} className="space-y-2">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div
                       className={`flex size-8 items-center justify-center rounded-xl ${config.iconBg} ${config.iconColor}`}
@@ -1320,26 +1798,29 @@ function LimitEditor({
                       {category.label}
                     </span>
                   </div>
-                  <input
-                    value={draftLimits[category.key]}
-                    onChange={(event) =>
-                      onChange({
-                        ...draftLimits,
-                        [category.key]: Math.max(Number(event.target.value), 0),
-                      })
-                    }
-                    inputMode="numeric"
-                    className={`w-28 rounded-xl px-3 py-2 text-right text-xs font-extrabold outline-none focus:ring-2 ${config.focusClass} ${
-                      isDarkMode ? "bg-slate-900" : "bg-slate-50"
-                    }`}
-                  />
+                  <div className="relative">
+                    <input
+                      value={draftVal}
+                      onChange={(event) =>
+                        onChange({
+                          ...draftLimits,
+                          [category.key]: Math.max(Number(event.target.value), 0),
+                        })
+                      }
+                      inputMode="numeric"
+                      className={`w-28 rounded-xl px-3 py-2 text-right text-xs font-black outline-none focus:ring-2 ${config.focusClass} border border-transparent ${
+                        isDarkMode ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-950"
+                      }`}
+                    />
+                  </div>
                 </div>
+                
                 <input
                   type="range"
                   min={0}
                   max={1000000}
                   step={10000}
-                  value={draftLimits[category.key]}
+                  value={draftVal}
                   onChange={(event) =>
                     onChange({
                       ...draftLimits,
@@ -1348,6 +1829,15 @@ function LimitEditor({
                   }
                   className="w-full accent-indigo-500"
                 />
+
+                <div className="flex justify-between text-[10px] font-bold text-slate-400">
+                  <span>지출: {currencyFormatter.format(currentSpent)}</span>
+                  {isExceeded ? (
+                    <span className="text-rose-500 font-extrabold animate-pulse">예산 초과 지출 중!</span>
+                  ) : (
+                    <span className="text-emerald-500 font-extrabold">남음: {currencyFormatter.format(draftVal - currentSpent)}</span>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -1356,7 +1846,7 @@ function LimitEditor({
         <button
           type="button"
           onClick={onSave}
-          className="mt-6 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-indigo-500/20"
+          className="mt-6 flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-indigo-500/20 hover:scale-[0.99] active:scale-[0.98] transition cursor-pointer"
         >
           예산 저장
         </button>
@@ -1387,43 +1877,70 @@ function CategoryDetailPopup({
   const category = categories.find((item) => item.key === categoryKey)!;
   const Icon = categoryIcons[categoryKey];
   const config = categoryConfig[categoryKey];
+  const percent = limit > 0 ? Math.round((total / limit) * 100) : 0;
 
   return (
-    <div className="modal-overlay fixed inset-0 z-40 flex items-end bg-slate-950/50 p-4 backdrop-blur-sm sm:items-center sm:justify-center">
+    <div className="modal-overlay fixed inset-0 z-40 flex items-end bg-slate-950/60 p-4 backdrop-blur-md sm:items-center sm:justify-center">
       <div
-        className={`modal-content max-h-[80vh] w-full max-w-md overflow-hidden rounded-3xl border shadow-2xl ${
+        className={`modal-content max-h-[80vh] w-full max-w-md overflow-hidden rounded-3xl border shadow-2xl transition-all duration-300 ${
           isDarkMode
-            ? "border-slate-800 bg-slate-950 text-white"
-            : "border-slate-100 bg-white text-slate-950"
+            ? "border-slate-800/80 bg-slate-950/95 text-white"
+            : "border-slate-200/60 bg-white/95 text-slate-950"
         }`}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
-          <div className="flex items-center gap-3">
-            <div
-              className={`flex size-10 items-center justify-center rounded-2xl ${config.iconBg} ${config.iconColor}`}
-            >
-              <Icon className="size-5" />
+        <div className="flex flex-col border-b border-slate-100 p-5 dark:border-slate-800/60">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div
+                className={`flex size-10 items-center justify-center rounded-2xl ${config.iconBg} ${config.iconColor}`}
+              >
+                <Icon className="size-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-extrabold">{category.label}</h2>
+                <p className="text-xs font-semibold text-slate-400">
+                  {currencyFormatter.format(total)} / {currencyFormatter.format(limit)}
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-lg font-extrabold">{category.label}</h2>
-              <p className="text-xs font-semibold text-slate-400">
-                {currencyFormatter.format(total)} /{" "}
-                {currencyFormatter.format(limit)}
-              </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className={`flex size-9 items-center justify-center rounded-xl transition cursor-pointer ${
+                isDarkMode 
+                  ? "bg-slate-900 hover:bg-slate-800 text-slate-400" 
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-500"
+              }`}
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          <div className="mt-3 space-y-1">
+            <div className="flex justify-between text-[10px] font-bold text-slate-400">
+              <span>예산 사용률</span>
+              <span className={percent >= 100 ? "text-rose-500" : percent >= 80 ? "text-amber-500" : "text-emerald-500"}>
+                {percent}%
+              </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  percent >= 100
+                    ? "bg-gradient-to-r from-rose-500 to-red-500"
+                    : percent >= 80
+                    ? "bg-gradient-to-r from-amber-500 to-rose-500"
+                    : "bg-gradient-to-r from-emerald-500 to-teal-500"
+                }`}
+                style={{ width: `${Math.min(percent, 100)}%` }}
+              />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex size-9 items-center justify-center rounded-xl bg-slate-100 text-slate-500"
-          >
-            <X className="size-4" />
-          </button>
         </div>
 
-        <div className="max-h-[58vh] space-y-2 overflow-y-auto p-4">
+        <div className="max-h-[50vh] space-y-2.5 overflow-y-auto p-4">
           {transactions.length === 0 ? (
-            <p className="py-8 text-center text-sm font-bold text-slate-400">
+            <p className="py-12 text-center text-xs font-bold text-slate-400">
               이 카테고리의 소비 내역이 없습니다.
             </p>
           ) : (

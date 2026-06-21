@@ -171,6 +171,7 @@ export async function getMonthlyExpenseSummary(): Promise<MonthlyExpenseSummary>
         direction: "descending",
       },
     ],
+    in_trash: false,
     page_size: 100,
   });
 
@@ -219,6 +220,7 @@ export async function getMonthlyExpenseSummary(): Promise<MonthlyExpenseSummary>
         },
       ],
     },
+    in_trash: false,
     page_size: 100,
   });
 
@@ -254,6 +256,7 @@ export async function deleteExpense(pageId: string) {
   await notion.pages.update({
     page_id: pageId,
     in_trash: true,
+    archived: true,
   });
 }
 
@@ -297,8 +300,8 @@ function readRequiredEnv(key: string) {
 
 function getCurrentMonthPeriod() {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const start = getBudgetCycleStart(now);
+  const nextMonth = new Date(start.getFullYear(), start.getMonth() + 1, 17);
 
   return {
     start: formatDateOnly(start),
@@ -308,23 +311,31 @@ function getCurrentMonthPeriod() {
 
 function getPreviousMonthToDatePeriod() {
   const now = new Date();
-  const previousStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const previousMonthLastDay = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    0,
-  ).getDate();
-  const comparableDay = Math.min(now.getDate(), previousMonthLastDay);
-  const previousEnd = new Date(
-    now.getFullYear(),
-    now.getMonth() - 1,
-    comparableDay + 1,
+  const currentStart = getBudgetCycleStart(now);
+  const currentToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const elapsedDays = Math.floor(
+    (currentToday.getTime() - currentStart.getTime()) / 86400000,
+  ) + 1;
+  const previousStart = new Date(
+    currentStart.getFullYear(),
+    currentStart.getMonth() - 1,
+    17,
   );
+  const previousEnd = new Date(previousStart);
+  previousEnd.setDate(previousStart.getDate() + elapsedDays);
 
   return {
     start: formatDateOnly(previousStart),
     end: formatDateOnly(previousEnd),
   };
+}
+
+function getBudgetCycleStart(date: Date) {
+  if (date.getDate() >= 17) {
+    return new Date(date.getFullYear(), date.getMonth(), 17);
+  }
+
+  return new Date(date.getFullYear(), date.getMonth() - 1, 17);
 }
 
 function formatDateOnly(date: Date) {

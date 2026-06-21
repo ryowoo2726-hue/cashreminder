@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,6 +15,34 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Cash Reminder",
   description: "Notion linked personal expense tracker",
+  manifest: "/site.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Cash Reminder",
+  },
+  icons: {
+    icon: [
+      {
+        url: "/logo.png",
+        type: "image/png",
+      },
+    ],
+    apple: [
+      {
+        url: "/logo.png",
+        type: "image/png",
+      },
+    ],
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -152,6 +152,8 @@ const storageKeys = {
   fixedExpenses: "cashreminder.fixedExpenses",
 } as const;
 
+const fixedExpenseBudget = 1300000;
+
 const currencyFormatter = new Intl.NumberFormat("ko-KR", {
   style: "currency",
   currency: "KRW",
@@ -256,9 +258,12 @@ export default function Home() {
 
     return window.localStorage.getItem(storageKeys.darkMode) === "true";
   });
-  const [activeSection, setActiveSection] = useState<"dashboard" | "transactions" | "form">("dashboard");
+  const [activeSection, setActiveSection] = useState<
+    "dashboard" | "fixed" | "transactions" | "form"
+  >("dashboard");
 
   const dashboardRef = useRef<HTMLDivElement>(null);
+  const fixedExpensesRef = useRef<HTMLElement>(null);
   const transactionsRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLElement>(null);
 
@@ -283,6 +288,8 @@ export default function Home() {
       return expense.paidMonth === currentMonthKey ? sum + expense.amount : sum;
     }, 0);
   }, [currentMonthKey, fixedExpenses]);
+
+  const fixedExpenseRemaining = fixedExpenseBudget - paidFixedExpenseTotal;
 
   const recentTransactions = useMemo(() => transactions.slice(0, 20), [transactions]);
 
@@ -371,6 +378,8 @@ export default function Home() {
         if (entry.isIntersecting) {
           if (entry.target === dashboardRef.current) {
             setActiveSection("dashboard");
+          } else if (entry.target === fixedExpensesRef.current) {
+            setActiveSection("fixed");
           } else if (entry.target === transactionsRef.current) {
             setActiveSection("transactions");
           } else if (entry.target === formRef.current) {
@@ -383,15 +392,18 @@ export default function Home() {
     const observer = new IntersectionObserver(observerCallback, observerOptions);
 
     const dashEl = dashboardRef.current;
+    const fixedEl = fixedExpensesRef.current;
     const transEl = transactionsRef.current;
     const formEl = formRef.current;
 
     if (dashEl) observer.observe(dashEl);
+    if (fixedEl) observer.observe(fixedEl);
     if (transEl) observer.observe(transEl);
     if (formEl) observer.observe(formEl);
 
     return () => {
       if (dashEl) observer.unobserve(dashEl);
+      if (fixedEl) observer.unobserve(fixedEl);
       if (transEl) observer.unobserve(transEl);
       if (formEl) observer.unobserve(formEl);
       observer.disconnect();
@@ -645,10 +657,14 @@ export default function Home() {
     );
   }
 
-  function scrollToSection(target: "dashboard" | "transactions" | "form") {
+  function scrollToSection(
+    target: "dashboard" | "fixed" | "transactions" | "form",
+  ) {
     const ref =
       target === "dashboard"
         ? dashboardRef
+        : target === "fixed"
+          ? fixedExpensesRef
         : target === "transactions"
           ? transactionsRef
           : formRef;
@@ -1070,7 +1086,7 @@ export default function Home() {
           </form>
         </section>
 
-        <section ref={transactionsRef} className="mt-6">
+        <section ref={fixedExpensesRef} className="mt-6">
           <FixedExpenseSection
             fixedExpenses={fixedExpenses}
             fixedTitle={fixedTitle}
@@ -1079,6 +1095,8 @@ export default function Home() {
             fixedDueDay={fixedDueDay}
             currentMonthKey={currentMonthKey}
             paidFixedExpenseTotal={paidFixedExpenseTotal}
+            fixedExpenseBudget={fixedExpenseBudget}
+            fixedExpenseRemaining={fixedExpenseRemaining}
             isDarkMode={isDarkMode}
             onAdd={handleAddFixedExpense}
             onTitleChange={setFixedTitle}
@@ -1088,7 +1106,9 @@ export default function Home() {
             onToggle={handleToggleFixedExpense}
             onDelete={handleDeleteFixedExpense}
           />
+        </section>
 
+        <section ref={transactionsRef} className="mt-6">
           <div className="mb-3.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ReceiptText className="size-4 text-indigo-500" />
@@ -1163,23 +1183,20 @@ export default function Home() {
             onClick={() => scrollToSection("dashboard")}
           />
           <BottomNavButton
+            icon={WalletCards}
+            label="고정"
+            isActive={activeSection === "fixed"}
+            onClick={() => scrollToSection("fixed")}
+          />
+          <div className="w-14" />
+          <BottomNavButton
             icon={ListTodo}
             label="내역"
             isActive={activeSection === "transactions"}
             onClick={() => scrollToSection("transactions")}
           />
-          <div className="w-14" />
           <BottomNavButton
             icon={SlidersHorizontal}
-            label="예산"
-            isActive={isLimitEditorOpen}
-            onClick={() => {
-              setDraftLimits(limits);
-              setIsLimitEditorOpen(true);
-            }}
-          />
-          <BottomNavButton
-            icon={WalletCards}
             label="입력"
             isActive={activeSection === "form"}
             onClick={() => scrollToSection("form")}
@@ -1418,6 +1435,8 @@ function FixedExpenseSection({
   fixedDueDay,
   currentMonthKey,
   paidFixedExpenseTotal,
+  fixedExpenseBudget,
+  fixedExpenseRemaining,
   isDarkMode,
   onAdd,
   onTitleChange,
@@ -1434,6 +1453,8 @@ function FixedExpenseSection({
   fixedDueDay: string;
   currentMonthKey: string;
   paidFixedExpenseTotal: number;
+  fixedExpenseBudget: number;
+  fixedExpenseRemaining: number;
   isDarkMode: boolean;
   onAdd: (event: FormEvent<HTMLFormElement>) => void;
   onTitleChange: (value: string) => void;
@@ -1444,6 +1465,11 @@ function FixedExpenseSection({
   onDelete: (expenseId: string) => void;
 }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const fixedBudgetPercent =
+    fixedExpenseBudget > 0
+      ? Math.round((paidFixedExpenseTotal / fixedExpenseBudget) * 100)
+      : 0;
+  const fixedBudgetWidth = Math.min(fixedBudgetPercent, 100);
 
   useEffect(() => {
     if (!confirmDeleteId) return;
@@ -1466,16 +1492,66 @@ function FixedExpenseSection({
           <div className="flex items-center gap-2">
             <WalletCards className="size-4 text-indigo-500" />
             <h2 className="text-sm font-extrabold uppercase tracking-wide">
-              고정 지출 체크
+              고정 지출 관리
             </h2>
           </div>
           <p className="mt-1 text-xs font-semibold text-slate-400">
-            이번 달 체크 완료 {currencyFormatter.format(paidFixedExpenseTotal)}
+            17일 기준 주기 · 예산 {currencyFormatter.format(fixedExpenseBudget)}
           </p>
         </div>
         <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/50 px-2.5 py-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
           {fixedExpenses.length}개
         </span>
+      </div>
+
+      <div
+        className={`mb-4 rounded-2xl border p-3 ${
+          isDarkMode
+            ? "border-slate-800 bg-slate-950/70"
+            : "border-slate-200/50 bg-slate-50/80"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              이번 주기 체크 완료
+            </p>
+            <p className="mt-1 text-lg font-black">
+              {currencyFormatter.format(paidFixedExpenseTotal)}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              남은 고정 예산
+            </p>
+            <p
+              className={`mt-1 text-lg font-black ${
+                fixedExpenseRemaining >= 0 ? "text-emerald-500" : "text-rose-500"
+              }`}
+            >
+              {fixedExpenseRemaining >= 0 ? "" : "-"}
+              {currencyFormatter.format(Math.abs(fixedExpenseRemaining))}
+            </p>
+          </div>
+        </div>
+        <div className="mt-3">
+          <div className="mb-1 flex justify-between text-[10px] font-bold text-slate-400">
+            <span>고정 지출 예산 사용률</span>
+            <span>{fixedBudgetPercent}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ${
+                fixedBudgetPercent >= 100
+                  ? "bg-gradient-to-r from-rose-500 to-red-500"
+                  : fixedBudgetPercent >= 80
+                    ? "bg-gradient-to-r from-amber-500 to-rose-500"
+                    : "bg-gradient-to-r from-indigo-500 to-cyan-500"
+              }`}
+              style={{ width: `${fixedBudgetWidth}%` }}
+            />
+          </div>
+        </div>
       </div>
 
       <form onSubmit={onAdd} className="grid gap-2">

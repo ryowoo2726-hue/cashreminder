@@ -15,7 +15,6 @@ import {
   ReceiptText,
   Save,
   Settings,
-  SlidersHorizontal,
   Sparkles,
   Sun,
   Trash2,
@@ -28,7 +27,6 @@ import {
   FormEvent,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 
@@ -81,6 +79,8 @@ type FixedExpense = {
   dueDay: number;
   paidMonth: string;
 };
+
+type AppPage = "dashboard" | "expenses" | "fixed";
 
 const categoryIcons: Record<
   CategoryKey,
@@ -258,14 +258,7 @@ export default function Home() {
 
     return window.localStorage.getItem(storageKeys.darkMode) === "true";
   });
-  const [activeSection, setActiveSection] = useState<
-    "dashboard" | "fixed" | "transactions" | "form"
-  >("dashboard");
-
-  const dashboardRef = useRef<HTMLDivElement>(null);
-  const fixedExpensesRef = useRef<HTMLElement>(null);
-  const transactionsRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLElement>(null);
+  const [activeSection, setActiveSection] = useState<AppPage>("dashboard");
 
   const selectedCategoryKey = useMemo(
     () => getCategoryKeyByLabel(selectedCategory),
@@ -365,50 +358,6 @@ export default function Home() {
       JSON.stringify(fixedExpenses),
     );
   }, [fixedExpenses]);
-
-  useEffect(() => {
-    const observerOptions = {
-      root: null,
-      rootMargin: "-20% 0px -60% 0px",
-      threshold: 0.1,
-    };
-
-    const observerCallback = (entries: IntersectionObserverEntry[]) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          if (entry.target === dashboardRef.current) {
-            setActiveSection("dashboard");
-          } else if (entry.target === fixedExpensesRef.current) {
-            setActiveSection("fixed");
-          } else if (entry.target === transactionsRef.current) {
-            setActiveSection("transactions");
-          } else if (entry.target === formRef.current) {
-            setActiveSection("form");
-          }
-        }
-      });
-    };
-
-    const observer = new IntersectionObserver(observerCallback, observerOptions);
-
-    const dashEl = dashboardRef.current;
-    const fixedEl = fixedExpensesRef.current;
-    const transEl = transactionsRef.current;
-    const formEl = formRef.current;
-
-    if (dashEl) observer.observe(dashEl);
-    if (fixedEl) observer.observe(fixedEl);
-    if (transEl) observer.observe(transEl);
-    if (formEl) observer.observe(formEl);
-
-    return () => {
-      if (dashEl) observer.unobserve(dashEl);
-      if (fixedEl) observer.unobserve(fixedEl);
-      if (transEl) observer.unobserve(transEl);
-      if (formEl) observer.unobserve(formEl);
-      observer.disconnect();
-    };
-  }, []);
 
   useEffect(() => {
     let isMountedFetch = true;
@@ -657,19 +606,9 @@ export default function Home() {
     );
   }
 
-  function scrollToSection(
-    target: "dashboard" | "fixed" | "transactions" | "form",
-  ) {
-    const ref =
-      target === "dashboard"
-        ? dashboardRef
-        : target === "fixed"
-          ? fixedExpensesRef
-        : target === "transactions"
-          ? transactionsRef
-          : formRef;
-
-    ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  function switchPage(target: AppPage) {
+    setActiveSection(target);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   const currentMonth = new Date().toLocaleDateString("ko-KR", {
@@ -687,7 +626,7 @@ export default function Home() {
       }`}
     >
       <div className="relative z-10 mx-auto max-w-xl px-4 pt-8 sm:pt-14">
-        <div ref={dashboardRef} className="space-y-6 mb-6">
+        <div className="space-y-6 mb-6">
           <header className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-3">
               <div
@@ -747,6 +686,14 @@ export default function Home() {
           </button>
         </header>
 
+        <PageTabs
+          activePage={activeSection}
+          isDarkMode={isDarkMode}
+          onChange={switchPage}
+        />
+
+        {activeSection === "dashboard" && (
+          <>
         <section className={`relative overflow-hidden rounded-3xl p-6 text-white shadow-2xl transition-all duration-300 border ${
           grandTotal > totalLimit
             ? "bg-gradient-to-br from-slate-900 via-rose-950/70 to-slate-950 border-rose-500/30 shadow-rose-500/5 animate-danger-pulse"
@@ -904,10 +851,12 @@ export default function Home() {
             })}
           </div>
         </section>
+          </>
+        )}
         </div>
 
+        {activeSection === "expenses" && (
         <section
-          ref={formRef}
           className={`rounded-3xl border p-5 shadow-xl backdrop-blur-md transition-all duration-500 sm:p-6 ${
             isDarkMode
               ? `bg-slate-900/40 ${selectedTheme.borderClass}`
@@ -1085,8 +1034,10 @@ export default function Home() {
             )}
           </form>
         </section>
+        )}
 
-        <section ref={fixedExpensesRef} className="mt-6">
+        {activeSection === "fixed" && (
+        <section className="mt-6">
           <FixedExpenseSection
             fixedExpenses={fixedExpenses}
             fixedTitle={fixedTitle}
@@ -1107,8 +1058,10 @@ export default function Home() {
             onDelete={handleDeleteFixedExpense}
           />
         </section>
+        )}
 
-        <section ref={transactionsRef} className="mt-6">
+        {activeSection === "expenses" && (
+        <section className="mt-6">
           <div className="mb-3.5 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <ReceiptText className="size-4 text-indigo-500" />
@@ -1157,16 +1110,8 @@ export default function Home() {
             </div>
           )}
         </section>
+        )}
       </div>
-
-      <button
-        type="button"
-        onClick={() => scrollToSection("form")}
-        className="fixed bottom-10 left-1/2 z-30 flex size-14 -translate-x-1/2 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-fuchsia-500 text-white shadow-2xl shadow-indigo-500/30 sm:hidden"
-        title="지출 입력"
-      >
-        <Plus className="size-6" />
-      </button>
 
       <nav
         className={`fixed inset-x-0 bottom-0 z-20 border-t px-5 py-2 backdrop-blur-xl sm:hidden ${
@@ -1180,26 +1125,19 @@ export default function Home() {
             icon={HomeIcon}
             label="대시보드"
             isActive={activeSection === "dashboard"}
-            onClick={() => scrollToSection("dashboard")}
+            onClick={() => switchPage("dashboard")}
+          />
+          <BottomNavButton
+            icon={Plus}
+            label="지출"
+            isActive={activeSection === "expenses"}
+            onClick={() => switchPage("expenses")}
           />
           <BottomNavButton
             icon={WalletCards}
-            label="고정"
+            label="고정지출"
             isActive={activeSection === "fixed"}
-            onClick={() => scrollToSection("fixed")}
-          />
-          <div className="w-14" />
-          <BottomNavButton
-            icon={ListTodo}
-            label="내역"
-            isActive={activeSection === "transactions"}
-            onClick={() => scrollToSection("transactions")}
-          />
-          <BottomNavButton
-            icon={SlidersHorizontal}
-            label="입력"
-            isActive={activeSection === "form"}
-            onClick={() => scrollToSection("form")}
+            onClick={() => switchPage("fixed")}
           />
         </div>
       </nav>
@@ -1228,6 +1166,60 @@ export default function Home() {
         />
       )}
     </main>
+  );
+}
+
+function PageTabs({
+  activePage,
+  isDarkMode,
+  onChange,
+}: {
+  activePage: AppPage;
+  isDarkMode: boolean;
+  onChange: (page: AppPage) => void;
+}) {
+  const tabs: Array<{
+    page: AppPage;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }> = [
+    { page: "dashboard", label: "대시보드", icon: HomeIcon },
+    { page: "expenses", label: "지출", icon: ListTodo },
+    { page: "fixed", label: "고정지출", icon: WalletCards },
+  ];
+
+  return (
+    <nav
+      className={`grid grid-cols-3 rounded-2xl border p-1 shadow-sm ${
+        isDarkMode
+          ? "border-slate-800 bg-slate-900/70"
+          : "border-slate-200/70 bg-white/80"
+      }`}
+      aria-label="주요 페이지"
+    >
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        const isActive = activePage === tab.page;
+
+        return (
+          <button
+            key={tab.page}
+            type="button"
+            onClick={() => onChange(tab.page)}
+            className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 text-xs font-extrabold transition-all ${
+              isActive
+                ? "bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+                : isDarkMode
+                  ? "text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            }`}
+          >
+            <Icon className="size-3.5" />
+            <span>{tab.label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 

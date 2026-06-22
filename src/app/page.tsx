@@ -152,7 +152,7 @@ const storageKeys = {
   fixedExpenses: "cashreminder.fixedExpenses",
 } as const;
 
-const fixedExpenseBudget = 1300000;
+const fixedExpenseBudget = 1450000;
 
 const currencyFormatter = new Intl.NumberFormat("ko-KR", {
   style: "currency",
